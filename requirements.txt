@@ -1,0 +1,5 @@
+streamlit==1.50.0
+numpy>=1.23
+matplotlib
+librosa>=0.11.0
+soundfile>=0.13.1

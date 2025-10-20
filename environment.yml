@@ -1,0 +1,13 @@
+name: ode_music_gen
+channels:
+  - conda-forge
+  - defaults
+dependencies:
+  - python=3.11
+  - numpy
+  - matplotlib
+  - pip
+  - pip:
+    - streamlit
+    - librosa
+    - soundfile
