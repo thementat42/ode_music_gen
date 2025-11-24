@@ -14,9 +14,11 @@ st.set_page_config(page_title="ODE Music Analyzer", layout="wide")
 st.title("Audio Harmonic Analyzer and Resynthesizer")
 st.write("Upload an audio file, view its spectrum A(f), detect peaks, and resynthesize for A/B comparison.")
 
+# tabs for different features: first tab is single-file analysis, second tab is two-file comparison
+tab1, tab2 = st.tabs(["Single Audio Analysis", "Two Recording Comparison"])
 
 def load_audio(file_bytes: bytes, target_sr: int = 44100):
-    # Try soundfile first (fast path), fallback to librosa
+    # attempt decoding with soundfile first for efficiency; fall back to librosa on failure
     try:
         data, sr = sf.read(io.BytesIO(file_bytes), always_2d=False)
         if data.ndim == 2:
@@ -26,16 +28,16 @@ def load_audio(file_bytes: bytes, target_sr: int = 44100):
             sr = target_sr
         return data.astype(np.float32), sr
     except Exception:
-        # Suppress mpg123/audioread ID3 warnings on stderr
+        # suppress mpg123 and id3 related stderr warnings during fallback load
         with open(os.devnull, 'w') as devnull, contextlib.redirect_stderr(devnull):
             y, sr = librosa.load(io.BytesIO(file_bytes), sr=target_sr, mono=True)
         return y.astype(np.float32), sr
 
 
 def compute_spectrum(y: np.ndarray, sr: int):
-    # Window and FFT
+    # create analysis window and perform fft
     n = len(y)
-    # Use power-of-two FFT size >= n up to a limit
+    # choose the next power of two greater than or equal to n (minimum 1024) for fft efficiency
     nfft = int(2 ** np.ceil(np.log2(max(1024, n))))
     win = np.hanning(min(n, nfft))
     x = np.zeros(nfft, dtype=np.float32)
@@ -49,22 +51,22 @@ def compute_spectrum(y: np.ndarray, sr: int):
 
 def pick_peaks(freq: np.ndarray, mag: np.ndarray, phase: np.ndarray,
                min_prominence: float, max_peaks: int, fmin: float, fmax: float):
-    # Simple local-max peak picking with prominence
+    # perform simple local maximum peak selection with a prominence threshold
     mask = (freq >= fmin) & (freq <= fmax)
     idxs = np.flatnonzero(mask)
     f = freq[mask]
     m = mag[mask]
     if len(m) < 3:
         return np.array([]), np.array([]), np.array([])
-    # Normalize magnitude for stable thresholding
+    # normalize magnitudes to stabilize thresholding
     m_norm = m / (np.max(m) + 1e-9)
     peaks = []
     for i in range(1, len(m_norm) - 1):
         if m_norm[i] > m_norm[i-1] and m_norm[i] > m_norm[i+1] and m_norm[i] >= min_prominence:
-            # Use absolute FFT bin index via masked indices
+            # record absolute fft bin index for phase retrieval
             abs_idx = int(idxs[i])
             peaks.append((float(f[i]), float(m_norm[i]), abs_idx))
-    # Sort by magnitude desc and keep top K
+    # sort peaks by descending magnitude and retain the top k
     peaks.sort(key=lambda t: t[1], reverse=True)
     peaks = peaks[:max_peaks]
     if not peaks:
@@ -85,14 +87,14 @@ def pick_peaks_nms(
     min_distance_hz: float = 20.0,
     min_prominence_norm: float = 0.0,
 ):
-    """Greedy non-maximum suppression (NMS) peak picking.
+    """non-maximum suppression peak picking.
 
-    Steps:
-    - Find local maxima within [fmin, fmax].
-    - Optionally filter by normalized prominence threshold.
-    - Sort candidates by magnitude descending.
-    - Iteratively accept a candidate only if it is not within min_distance_hz of any already selected peak.
-    - Stop when max_peaks selected or no candidates remain.
+    steps:
+    - identify local maxima within the specified frequency range.
+    - filter by normalized prominence threshold if provided.
+    - sort candidates by magnitude in descending order.
+    - iteratively retain a candidate only if it is not within min_distance_hz of any previously retained peak.
+    - stop when max_peaks is reached or no candidates remain.
     """
     mask = (freq >= fmin) & (freq <= fmax)
     if not np.any(mask) or max_peaks <= 0:
@@ -104,31 +106,31 @@ def pick_peaks_nms(
         return np.array([]), np.array([]), np.array([])
     m_norm = m / (np.max(m) + 1e-9)
 
-    # Collect local maxima candidates (relative indices)
+    # collect indices of local maxima that pass prominence threshold
     cand_rel = []
     for i in range(1, len(m) - 1):
         if m[i] > m[i - 1] and m[i] > m[i + 1]:
             if m_norm[i] >= float(min_prominence_norm):
                 cand_rel.append(i)
-    # Fallback to top bins if no local maxima pass the threshold
+    # fallback: if no local maxima pass, use strongest magnitude bins
     if not cand_rel:
         order = np.argsort(m)[::-1]
         cand_rel = order.tolist()
 
-    # Build candidate list with absolute indices and values
+    # build candidate tuples (frequency, magnitude, phase, absolute index)
     cands = []
     for i in cand_rel:
         abs_idx = int(idxs[i])
         cands.append((float(freq[abs_idx]), float(mag[abs_idx]), float(phase[abs_idx]), abs_idx))
 
-    # Sort by amplitude descending
+    # sort candidates by descending magnitude
     cands.sort(key=lambda t: t[1], reverse=True)
 
     sel_f, sel_a, sel_p = [], [], []
     for cf, ca, cp, _ in cands:
         if len(sel_f) >= int(max_peaks):
             break
-        # Suppress if within min_distance_hz of any stronger selected peak
+        # skip candidate if it is within min_distance_hz of a retained peak
         if any(abs(cf - sf) < float(min_distance_hz) for sf in sel_f):
             continue
         sel_f.append(cf)
@@ -145,111 +147,389 @@ def resynthesize_from_peaks(
     sr: int,
     peak_freqs: np.ndarray,
     peak_amps: np.ndarray,
-    peak_phases: np.ndarray | None = None,
+    peak_phases: np.ndarray = None,
     apply_scaling: bool = True,
     scale_multiplier: float = 1.0,
 ):
-    """Resynthesize a signal from peak frequencies, amplitudes, and phases.
+    """resynthesize a sinusoidal mixture from selected peak frequencies.
 
-    Includes the requested normalization factor 1/(Δt·n) = sr/num_peaks, where:
-    - Δt = 1/sr (sample period)
-    - n = number of included frequency components (len(peak_freqs))
-    A safety normalization is applied only if the signal would clip.
+    incorporates optional scaling by sr / n (normalization factor) and applies peak normalization only if clipping would occur.
+    if phases are absent or mismatched in length, zeros are used.
     """
     if len(peak_freqs) == 0:
         return np.zeros(int(duration * sr), dtype=np.float32)
     t = np.arange(int(duration * sr), dtype=np.float32) / sr
-    # Normalize peak amplitudes to a stable range before applying scaling
+    # normalize amplitudes to avoid scaling instabilities
     a = peak_amps / (np.max(peak_amps) + 1e-9)
     y = np.zeros_like(t)
     if peak_phases is None or len(peak_phases) != len(peak_freqs):
         peak_phases = np.zeros_like(peak_freqs)
     for f, amp, ph in zip(peak_freqs, a, peak_phases):
         y += amp * np.sin(2 * np.pi * f * t + ph)
-    # Optional 1/(Δt·n) scaling: Δt = 1/sr => sr/n
+    # optionally scale by sr / n (requested normalization factor)
     if apply_scaling:
         n_comp = max(1, int(len(peak_freqs)))
         y *= (float(sr) / float(n_comp))
-    # Optional user multiplier to compare differences
+    # apply user-provided overall gain multiplier
     y *= float(scale_multiplier)
-    # Safety normalization: only if clipping would occur
+    # apply peak normalization only if clipping would otherwise occur
     peak = float(np.max(np.abs(y)) + 1e-12)
     if peak > 1.0:
         y = y / peak
     return y.astype(np.float32)
 
 
-uploaded = st.file_uploader("Upload audio (wav, mp3, flac)", type=["wav", "mp3", "flac", "ogg", "m4a"])
+def find_harmonic_amplitudes(freq: np.ndarray, mag: np.ndarray, fundamental_freq: float, max_harmonics: int, tolerance_hz: float = 5.0):
+    """locate each harmonic n * f0 within a +/- tolerance window and select the loudest bin.
 
-col1, col2 = st.columns(2)
-with col1:
-    sr = st.number_input("Sample rate", min_value=8000, max_value=96000, value=44100, step=1000)
-    max_peaks = st.slider("Max peaks", 1, 50, 5)
-    min_prom = st.slider("Min prominence (normalized)", 0.0, 1.0, 0.0, 0.01)
-with col2:
-    fmin = st.number_input("Min freq (Hz)", min_value=0.0, value=20.0, step=1.0)
-    fmax_default = float(min(int(sr)//2, 10000))
-    fmax = st.number_input("Max freq (Hz)", min_value=100.0, value=fmax_default, step=10.0)
-    resyn_dur = st.number_input("Resynthesis duration (s)", min_value=0.1, value=2.0, step=0.1)
-    scale_mult = st.number_input("Scaling multiplier", min_value=0.01, max_value=10.0, value=1.0, step=0.01)
+    parameters:
+      freq: fft frequency bins.
+      mag: raw magnitudes (normalized internally).
+      fundamental_freq: detected fundamental frequency f0.
+      max_harmonics: number of harmonic multiples to evaluate.
+      tolerance_hz: half-width of the search window around each target frequency.
 
-if uploaded is not None:
-    file_bytes = uploaded.read()
-    y, sr = load_audio(file_bytes, target_sr=int(sr))
-    st.audio(y, sample_rate=int(sr), format="audio/wav")
+    returns:
+      harmonic_amps: normalized amplitudes per harmonic.
+      harmonic_freqs: actual bin frequencies selected.
+      target_freqs: ideal harmonic target frequencies n * f0.
+    """
+    # normalize magnitudes for consistent scaling
+    mag_normalized = mag / (np.max(mag) + 1e-9)
 
-    # Spectrum
-    freq, mag, phase, nfft = compute_spectrum(y, int(sr))
-    fig, ax = plt.subplots(figsize=(8, 3))
-    ax.plot(freq, mag, lw=0.8)
-    ax.set_xlim(0.0, float(min(fmax, float(freq[-1]))))
-    ax.set_xlabel("Frequency (Hz)")
-    ax.set_ylabel("Amplitude (|A(f)|)")
-    ax.set_title("Magnitude Spectrum")
-    st.pyplot(fig, clear_figure=True)
+    harmonic_amps: list[float] = []
+    harmonic_freqs: list[float] = []
+    target_freqs: list[float] = []
 
-    # Peaks with non-maximum suppression (20 Hz gap)
-    pf, pa, pph = pick_peaks_nms(
-        freq, mag, phase,
-        max_peaks=int(max_peaks),
-        fmin=float(fmin),
-        fmax=float(fmax),
-        min_distance_hz=100.0,
-        min_prominence_norm=float(min_prom),
+    for n in range(1, max_harmonics + 1):
+        target_freq = n * fundamental_freq
+        target_freqs.append(target_freq)
+
+        # define search window bounds around the target frequency
+        freq_min = target_freq - tolerance_hz
+        freq_max = target_freq + tolerance_hz
+
+        # determine which bins lie inside the window
+        window_mask = (freq >= freq_min) & (freq <= freq_max)
+
+        if np.any(window_mask):
+            # select the loudest bin within the window
+            window_indices = np.where(window_mask)[0]
+            window_mags = mag_normalized[window_indices]
+            window_freqs = freq[window_indices]
+
+            max_idx_in_window = np.argmax(window_mags)
+            actual_idx = window_indices[max_idx_in_window]
+
+            harmonic_amps.append(float(mag_normalized[actual_idx]))
+            harmonic_freqs.append(float(freq[actual_idx]))
+        else:
+            # if no bins match, assign zero amplitude and retain the target frequency
+            harmonic_amps.append(0.0)
+            harmonic_freqs.append(float(target_freq))  # keep target freq as placeholder
+
+    return (
+        np.array(harmonic_amps, dtype=np.float32),
+        np.array(harmonic_freqs, dtype=np.float32),
+        np.array(target_freqs, dtype=np.float32),
     )
-    if len(pf) > 0:
-        st.write(f"Detected {len(pf)} peaks (min gap 20 Hz)")
-        # Overlay peaks
-        fig2, ax2 = plt.subplots(figsize=(8, 3))
-        ax2.plot(freq, mag, lw=0.6, alpha=0.6)
-        ax2.scatter(pf, pa, color='r', s=15, label='peaks')
-        ax2.set_xlim(0.0, float(min(fmax, float(freq[-1]))))
-        ax2.set_xlabel("Frequency (Hz)")
-        ax2.set_ylabel("Amplitude (|A(f)|)")
-        ax2.legend()
-        st.pyplot(fig2, clear_figure=True)
 
-        # Show selected peaks table
-        st.write("Selected peaks:")
-        st.dataframe({
-            "Frequency (Hz)": np.round(pf.astype(float), 2),
-            "Amplitude": np.round(pa.astype(float), 6),
-        }, use_container_width=True)
 
-        # Resynthesize
-        y_resyn = resynthesize_from_peaks(
-            float(resyn_dur),
-            int(sr),
-            pf,
-            pa,
-            pph,
-            apply_scaling=True,
-            scale_multiplier=float(scale_mult),
-        )
-        st.subheader("Original vs Resynthesized")
-        st.write("Original")
+def calculate_harmonic_mse(actual_harmonics: np.ndarray, theoretical_harmonics: np.ndarray):
+    """compute mean squared error per harmonic and the overall average mse.
+
+    arrays are truncated to a common length if they differ.
+    """
+    # ensure arrays share the same length by truncation if necessary
+    min_len = min(len(actual_harmonics), len(theoretical_harmonics))
+    actual = actual_harmonics[:min_len]
+    theoretical = theoretical_harmonics[:min_len]
+    
+    # compute squared error per harmonic
+    mse_per_harmonic = (actual - theoretical) ** 2
+    mse_total = np.mean(mse_per_harmonic)
+    
+    return mse_total, mse_per_harmonic
+
+
+def detect_fundamental_frequency(freq: np.ndarray, mag: np.ndarray, min_freq: float = 50.0, max_freq: float = 800.0):
+    """estimate the fundamental frequency by selecting the strongest peak within a candidate band.
+
+    suitable for steady tonal signals.
+    """
+    # restrict frequency range to plausible fundamental bounds
+    mask = (freq >= min_freq) & (freq <= max_freq)
+    if not np.any(mask):
+        return 220.0  # Default fallback frequency
+    
+    freq_filtered = freq[mask]
+    mag_filtered = mag[mask]
+    
+    # select frequency with maximum magnitude within filtered band
+    max_idx = np.argmax(mag_filtered)
+    fundamental_freq = freq_filtered[max_idx]
+    
+    return float(fundamental_freq)
+
+
+with tab1:
+    st.write("Upload an audio file, view its spectrum A(f), detect peaks, and resynthesize for A/B comparison.")  # single-file analysis workflow
+    
+    uploaded = st.file_uploader("Upload audio (wav, mp3, flac)", type=["wav", "mp3", "flac", "ogg", "m4a"])
+
+    col1, col2 = st.columns(2)
+    with col1:
+        sr = st.number_input("Sample rate", min_value=8000, max_value=96000, value=44100, step=1000)
+        max_peaks = st.slider("Max peaks", 1, 50, 5)
+        min_prom = st.slider("Min prominence (normalized)", 0.0, 1.0, 0.0, 0.01)
+    with col2:
+        fmin = st.number_input("Min freq (Hz)", min_value=0.0, value=20.0, step=1.0)
+        fmax_default = float(min(int(sr)//2, 10000))
+        fmax = st.number_input("Max freq (Hz)", min_value=100.0, value=fmax_default, step=10.0)
+        resyn_dur = st.number_input("Resynthesis duration (s)", min_value=0.1, value=2.0, step=0.1)
+        scale_mult = st.number_input("Scaling multiplier", min_value=0.01, max_value=10.0, value=1.0, step=0.01)
+
+    if uploaded is not None:
+        file_bytes = uploaded.read()
+        y, sr = load_audio(file_bytes, target_sr=int(sr))
         st.audio(y, sample_rate=int(sr), format="audio/wav")
-        st.write("Resynthesized (sinusoidal, peak amplitudes normalized)")
-        st.audio(y_resyn, sample_rate=int(sr), format="audio/wav")
+
+        # plot spectrum for the uploaded audio
+        freq, mag, phase, nfft = compute_spectrum(y, int(sr))
+        fig, ax = plt.subplots(figsize=(8, 3))
+        ax.plot(freq, mag, lw=0.8)
+        ax.set_xlim(0.0, float(min(fmax, float(freq[-1]))))
+        ax.set_xlabel("Frequency (Hz)")
+        ax.set_ylabel("Amplitude (|A(f)|)")
+        ax.set_title("Magnitude Spectrum")
+        st.pyplot(fig, clear_figure=True)
+
+        # detect peaks using nms approach to avoid closely spaced duplicates
+        pf, pa, pph = pick_peaks_nms(
+            freq, mag, phase,
+            max_peaks=int(max_peaks),
+            fmin=float(fmin),
+            fmax=float(fmax),
+            min_distance_hz=100.0,
+            min_prominence_norm=float(min_prom),
+        )
+        if len(pf) > 0:
+            st.write(f"Detected {len(pf)} peaks (min gap 20 Hz)")
+            # overlay detected peaks on the magnitude spectrum
+            fig2, ax2 = plt.subplots(figsize=(8, 3))
+            ax2.plot(freq, mag, lw=0.6, alpha=0.6)
+            ax2.scatter(pf, pa, color='r', s=15, label='peaks')
+            ax2.set_xlim(0.0, float(min(fmax, float(freq[-1]))))
+            ax2.set_xlabel("Frequency (Hz)")
+            ax2.set_ylabel("Amplitude (|A(f)|)")
+            ax2.legend()
+            st.pyplot(fig2, clear_figure=True)
+
+            # display table of detected peak frequencies and amplitudes
+            st.write("Selected peaks:")
+            st.dataframe({
+                "Frequency (Hz)": np.round(pf.astype(float), 2),
+                "Amplitude": np.round(pa.astype(float), 6),
+            }, use_container_width=True)
+
+            # resynthesize signal from detected sinusoidal components
+            y_resyn = resynthesize_from_peaks(
+                float(resyn_dur),
+                int(sr),
+                pf,
+                pa,
+                pph,
+                apply_scaling=True,
+                scale_multiplier=float(scale_mult),
+            )
+            st.subheader("Original vs Resynthesized")
+            st.write("Original")
+            st.audio(y, sample_rate=int(sr), format="audio/wav")
+            st.write("Resynthesized (sinusoidal, peak amplitudes normalized)")
+            st.audio(y_resyn, sample_rate=int(sr), format="audio/wav")
+        else:
+            st.info("No peaks detected with current settings; try lowering min prominence or widening the frequency range.")
+
+with tab2:
+    st.write("Compare two recordings: actual vs theoretical. Analyze harmonic frequencies and calculate MSE error.")  # two-file comparative analysis workflow
+    
+    # upload widgets for actual and theoretical audio recordings
+    col_upload1, col_upload2 = st.columns(2)
+    
+    with col_upload1:
+        st.subheader("Actual Recording")
+        actual_file = st.file_uploader("Upload actual recording", type=["wav", "mp3", "flac", "ogg", "m4a"], key="actual")
+    
+    with col_upload2:
+        st.subheader("Theoretical Recording") 
+        theoretical_file = st.file_uploader("Upload theoretical recording", type=["wav", "mp3", "flac", "ogg", "m4a"], key="theoretical")
+    
+    # user-adjustable parameters for comparison
+    col_param1, col_param2 = st.columns(2)
+    
+    with col_param1:
+        comp_sr = st.number_input("Sample rate for comparison", min_value=8000, max_value=96000, value=44100, step=1000, key="comp_sr")
+        min_fund_freq = st.number_input("Min fundamental freq (Hz)", min_value=20.0, value=50.0, step=1.0, key="min_fund")
+        max_display_freq = st.number_input("Max display frequency (Hz)", min_value=500.0, value=2000.0, step=100.0, key="max_display_freq")
+        
+    with col_param2:
+        max_fund_freq = st.number_input("Max fundamental freq (Hz)", min_value=100.0, value=800.0, step=1.0, key="max_fund")
+        max_harmonics = st.slider("Max harmonics (n)", 1, 20, 10, key="max_harmonics")
+        window_size = st.number_input("Search window size (Hz)", min_value=0.1, value=5.0, step=0.1, key="window_size")
+    
+    if actual_file is not None and theoretical_file is not None:
+        # load and resample both recordings to a common sample rate
+        actual_bytes = actual_file.read()
+        theoretical_bytes = theoretical_file.read()
+        
+        y_actual, sr_actual = load_audio(actual_bytes, target_sr=int(comp_sr))
+        y_theoretical, sr_theoretical = load_audio(theoretical_bytes, target_sr=int(comp_sr))
+        
+        # display audio players for both recordings
+        col_audio1, col_audio2 = st.columns(2)
+        with col_audio1:
+            st.write("**Actual Recording:**")
+            st.audio(y_actual, sample_rate=int(comp_sr), format="audio/wav")
+            
+        with col_audio2:
+            st.write("**Theoretical Recording:**")
+            st.audio(y_theoretical, sample_rate=int(comp_sr), format="audio/wav")
+        
+        # compute spectra for actual and theoretical recordings
+        freq_actual, mag_actual, phase_actual, _ = compute_spectrum(y_actual, int(comp_sr))
+        freq_theoretical, mag_theoretical, phase_theoretical, _ = compute_spectrum(y_theoretical, int(comp_sr))
+        
+        # estimate fundamental frequency from actual recording
+        fundamental_freq = detect_fundamental_frequency(freq_actual, mag_actual, min_fund_freq, max_fund_freq)
+        
+        # present detected fundamental frequency to user
+        st.info(f"**Detected Fundamental Frequency from Actual Recording: {fundamental_freq:.2f} Hz**")
+        
+        # extract harmonic amplitudes for actual recording
+        harmonics_actual, harmonic_freqs_actual, target_freqs = find_harmonic_amplitudes(
+            freq_actual, mag_actual, fundamental_freq, max_harmonics, window_size
+        )
+        
+        harmonics_theoretical, harmonic_freqs_theoretical, _ = find_harmonic_amplitudes(
+            freq_theoretical, mag_theoretical, fundamental_freq, max_harmonics, window_size
+        )
+        
+        # normalize magnitudes for comparable plotting scale
+        mag_actual_norm = mag_actual / (np.max(mag_actual) + 1e-9)
+        mag_theoretical_norm = mag_theoretical / (np.max(mag_theoretical) + 1e-9)
+        
+        # plot normalized spectra including search windows and selected harmonic bins
+        fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+        
+        ax1.plot(freq_actual, mag_actual_norm, lw=0.8, label='Actual', color='blue')
+        # annotate detected fundamental frequency
+        ax1.axvline(x=fundamental_freq, color='green', linestyle='--', alpha=0.7, label=f'Fundamental: {fundamental_freq:.1f} Hz')
+        
+        # highlight search window and selected bin for each harmonic (actual)
+        for i, (target_f, actual_f) in enumerate(zip(target_freqs[:max_harmonics], harmonic_freqs_actual[:max_harmonics])):
+            if actual_f <= min(max_display_freq, freq_actual[-1]):
+                # Show search window as shaded region
+                ax1.axvspan(target_f - window_size, target_f + window_size, alpha=0.1, color='orange')
+                # Mark actual frequency found
+                ax1.axvline(x=actual_f, color='red', linestyle=':', alpha=0.6, 
+                           label=f'H{i+1}: {actual_f:.1f}Hz' if i < 5 else '')
+        
+        ax1.set_xlabel("Frequency (Hz)")
+        ax1.set_ylabel("Normalized Amplitude")
+        ax1.set_title("Actual Recording Spectrum (Normalized)")
+        ax1.set_xlim(0, min(max_display_freq, freq_actual[-1]))
+        ax1.legend()
+        
+        ax2.plot(freq_theoretical, mag_theoretical_norm, lw=0.8, label='Theoretical', color='red')
+        
+        # highlight search window and selected bin for each harmonic (theoretical)
+        for i, (target_f, theoretical_f) in enumerate(zip(target_freqs[:max_harmonics], harmonic_freqs_theoretical[:max_harmonics])):
+            if theoretical_f <= min(max_display_freq, freq_theoretical[-1]):
+                # Show search window as shaded region
+                ax2.axvspan(target_f - window_size, target_f + window_size, alpha=0.1, color='orange')
+                # Mark actual frequency found
+                ax2.axvline(x=theoretical_f, color='blue', linestyle=':', alpha=0.6,
+                           label=f'H{i+1}: {theoretical_f:.1f}Hz' if i < 5 else '')
+        
+        ax2.set_xlabel("Frequency (Hz)")
+        ax2.set_ylabel("Normalized Amplitude")
+        ax2.set_title("Theoretical Recording Spectrum (Normalized)")
+        ax2.set_xlim(0, min(max_display_freq, freq_theoretical[-1]))
+        ax2.legend()
+        
+        plt.tight_layout()
+        st.pyplot(fig, clear_figure=True)
+        
+        # calculate mse metrics
+        mse_total, mse_per_harmonic = calculate_harmonic_mse(harmonics_actual, harmonics_theoretical)
+        
+        # present harmonic analysis results
+        st.subheader("Harmonic Analysis Results")
+        
+        # construct results table including target and selected frequencies
+        results_df = {
+            "Harmonic (n)": list(range(1, len(harmonics_actual) + 1)),
+            "Argmax Target Freq (Hz)": np.round(target_freqs, 2),
+            "Argmax Actual Freq (Hz)": np.round(harmonic_freqs_actual, 2),
+            "Theoretical Freq (Hz)": np.round(harmonic_freqs_theoretical, 2),
+            "Actual Amplitude": np.round(harmonics_actual, 6),
+            "Theoretical Amplitude": np.round(harmonics_theoretical, 6),
+            "MSE": np.round(mse_per_harmonic, 8)
+        }
+        
+        st.dataframe(results_df, use_container_width=True)
+        
+        # display aggregate mse
+        st.metric("Total MSE", f"{mse_total:.8f}")
+        
+        # plot bar chart comparing harmonic amplitudes
+        fig_harmonics, ax_harm = plt.subplots(figsize=(10, 6))
+        
+        harmonic_numbers = range(1, len(harmonics_actual) + 1)
+        width = 0.35
+        x = np.arange(len(harmonic_numbers))
+        
+        bars1 = ax_harm.bar(x - width/2, harmonics_actual, width, label='Actual', alpha=0.8, color='blue')
+        bars2 = ax_harm.bar(x + width/2, harmonics_theoretical, width, label='Theoretical', alpha=0.8, color='red')
+        
+        ax_harm.set_xlabel('Harmonic Number (n)')
+        ax_harm.set_ylabel('Amplitude')
+        ax_harm.set_title('Harmonic Amplitudes Comparison')
+        ax_harm.set_xticks(x)
+        ax_harm.set_xticklabels(harmonic_numbers)
+        ax_harm.legend()
+        ax_harm.grid(True, alpha=0.3)
+        
+        # annotate each bar with amplitude value
+        for bar in bars1:
+            height = bar.get_height()
+            ax_harm.annotate(f'{height:.3f}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),  # 3 points vertical offset
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=8)
+                           
+        for bar in bars2:
+            height = bar.get_height()
+            ax_harm.annotate(f'{height:.3f}',
+                           xy=(bar.get_x() + bar.get_width() / 2, height),
+                           xytext=(0, 3),  # 3 points vertical offset
+                           textcoords="offset points",
+                           ha='center', va='bottom', fontsize=8)
+        
+        plt.tight_layout()
+        st.pyplot(fig_harmonics, clear_figure=True)
+        
+        # plot per-harmonic mse values
+        fig_mse, ax_mse = plt.subplots(figsize=(10, 4))
+        ax_mse.bar(harmonic_numbers, mse_per_harmonic, color='orange', alpha=0.7)
+        ax_mse.set_xlabel('Harmonic Number (n)')
+        ax_mse.set_ylabel('MSE')
+        ax_mse.set_title('MSE per Harmonic')
+        ax_mse.grid(True, alpha=0.3)
+        
+        plt.tight_layout()
+        st.pyplot(fig_mse, clear_figure=True)
+        
     else:
-        st.info("No peaks detected with current settings; try lowering min prominence or widening the frequency range.")
+        st.info("Please upload both actual and theoretical recordings to perform comparison.")  # require both recordings to proceed with comparison
