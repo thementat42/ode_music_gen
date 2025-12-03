@@ -13,7 +13,7 @@ steps = int(duration*fs)
 # ---------------------------------------------
 # Target note: G3 = 196 Hz
 # ---------------------------------------------
-f1 = 293.66      # fundamental freq of D string
+f1 = 587.33      # fundamental freq of D string
 
 # ---------------------------------------------
 # Physical parameters for G string
@@ -32,8 +32,8 @@ mu_k = 0.3
 vs = 0.1
 g = 120.0
 k_bristle = 80.0
-N_force = 1          
-vb = 0.06               # slightly lower bow speed for stability
+N_force = 0.1       
+vb = 0.001               # slightly lower bow speed for stability
 
 mb = 0.01
 kb_br = (2*np.pi*550)**2 * mb
