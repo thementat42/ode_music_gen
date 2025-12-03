@@ -535,7 +535,7 @@ with tab2:
         st.info("Please upload both actual and theoretical recordings to perform comparison.")  # require both recordings to proceed with comparison
 
 with tab3:
-        st.write("Interactive piano playground using generated notes (G2–C6). click keys or use keyboard to play/stop. peak-start playback ensures immediate sound.")
+        st.write("Interactive piano playground using generated notes (G2–C6). Click keys or use keyboard to play/stop.")
 
         # define note names from G2 to C6 (inclusive) using equal-temperament sequence of semitones
         white_keys_order = [
@@ -670,7 +670,7 @@ with tab3:
             ("E3", 6.75, 0.30), ("A3", 7.05, 0.30),
         ]
 
-        st.write("press keys or click to play; click again or release to stop. use the play button to start an illustrative fur elise motif.")
+        st.write("All notes are generated with ODE to mimic violin.")
 
         # render interactive keyboard via html/js component
         import json
@@ -699,8 +699,6 @@ with tab3:
                 display: grid;
                 grid-template-columns: repeat({len(white_keys_order)}, 1fr);
                 gap: 2px;
-                    position: relative;
-                    z-index: 2;
             }}
             .white-key {{
                 background: #fff;
@@ -723,7 +721,6 @@ with tab3:
                 padding: 2px 6px;
                 font-size: 11px;
                 color: #333;
-                 z-index: 5; /* ensure visible above overlapping black keys */
             }}
             .white-key.active {{
                 background: #cfe8ff;
@@ -736,7 +733,6 @@ with tab3:
                 width: 100%;
                 height: 120px;
                 pointer-events: none;
-                    z-index: 3; /* sit above white keys */
             }}
             .black-key {{
                 position: absolute;
@@ -746,13 +742,11 @@ with tab3:
                 border: 1px solid #333;
                 transform: translateX(-50%);
                 pointer-events: auto;
-                z-index: 3;
             }}
             .black-key .keycap-label {{
                 background: rgba(255,255,255,0.15);
                 border-color: rgba(255,255,255,0.25);
                 color: #f5f5f5;
-                    z-index: 6;
             }}
             .black-key.active {{
                 background: #444;
@@ -816,6 +810,16 @@ with tab3:
                 const keycap = document.createElement('div');
                 keycap.className = 'keycap-label';
                 keycap.textContent = noteToKey.get(note) || '';
+                // shift labels for F, G, A to the left to avoid overlay
+                const leading = note.charAt(0);
+                if (leading === 'F' || leading === 'G' || leading === 'A' || leading === 'C') {{
+                    keycap.style.left = '35%';
+                    keycap.style.transform = 'translateX(-50%)';
+                }}
+                if (leading === 'D') {{
+                    keycap.style.left = '35%';
+                    keycap.style.transform = 'translateX(-65%)';
+                }}
                 const noteLbl = document.createElement('div');
                 noteLbl.className = 'note-label';
                 noteLbl.textContent = note;
