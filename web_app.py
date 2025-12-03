@@ -12,7 +12,7 @@ import librosa.display
 
 st.set_page_config(page_title="ODE Music Analyzer", layout="wide")
 st.title("Audio Harmonic Analyzer and Resynthesizer")
-st.write("Upload an audio file, view its spectrum A(f), detect peaks, and resynthesize for A/B comparison.")
+st.write("Upload an audio file, view its spectrum A(f), resynthesize for A/B comparison, and play music in playground.")
 
 # tabs for different features: first tab is single-file analysis, second tab is two-file comparison
 tab1, tab2, tab3 = st.tabs(["Single Audio Analysis", "Two Recording Comparison", "Playground"])

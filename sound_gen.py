@@ -2,27 +2,21 @@ import numpy as np
 from scipy.io.wavfile import write
 import math
 
-# ---------------------------------------------
-# Simulation parameters
-# ---------------------------------------------
+# simulation parameters
 fs = 44100              
 dt = 1/fs               
-duration = 8.0          # sustained G note
+duration = 8.0          #sustained G note
 steps = int(duration*fs)
 
-# ---------------------------------------------
-# Target note: G3 = 196 Hz
-# ---------------------------------------------
-f1 = 587.33      # fundamental freq of D string
+# ----------------target note ---------------
+f1 = 587.33      #fundamental freq of D string
 
-# ---------------------------------------------
-# Physical parameters for G string
-# ---------------------------------------------
+# physical parameters for G string
 M = 18                  
 L = 0.328               
 rho_l = 6e-4            
 
-# Compute tension needed so f1 = (1/(2L)) * sqrt(T/(rho_l*L))
+# compute tension needed so f1 = (1/(2L)) * sqrt(T/(rho_l*L))
 T = (2*L*f1)**2 * (rho_l * L)
 
 xb = 0.1*L 
@@ -33,7 +27,7 @@ vs = 0.1
 g = 120.0
 k_bristle = 80.0
 N_force = 0.1       
-vb = 0.001               # slightly lower bow speed for stability
+vb = 0.001               #slightly lower bow speed to maintain sound against friction
 
 mb = 0.01
 kb_br = (2*np.pi*550)**2 * mb
@@ -47,9 +41,7 @@ mH = rho_air*Sn*0.0085
 KH = rho_air*(c_air**2)*(Sn**2) / V
 rH = 0.15
 
-# ---------------------------------------------
-# Precompute modal constants
-# ---------------------------------------------
+# precompute modal constants
 n = np.arange(1, M+1)
 omega_n = n*np.pi*np.sqrt(T/(rho_l*L))/L
 Gn = (2/(rho_l*L) * np.sin(n*np.pi*xb/L))
@@ -57,9 +49,7 @@ sin_xb = np.sin(n*np.pi*xb/L)
 sign_alt = ((-1)**n)
 nxpi_L = (n*np.pi/L)
 
-# ---------------------------------------------
 # ODE System
-# ---------------------------------------------
 def deriv(y):
     q = y[0:M]
     qd = y[M:2*M]
@@ -105,9 +95,7 @@ def deriv(y):
     dydt[2*M+4] = phi_dot
     return dydt
 
-# ---------------------------------------------
 # RK4
-# ---------------------------------------------
 def rk4_step(y):
     k1 = deriv(y)
     k2 = deriv(y + 0.5*dt*k1)
@@ -115,9 +103,7 @@ def rk4_step(y):
     k4 = deriv(y + dt*k3)
     return y + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
 
-# ---------------------------------------------
-# Run simulation
-# ---------------------------------------------
+# run simulation
 y = np.zeros(2*M + 5)
 output = np.zeros(steps)
 
