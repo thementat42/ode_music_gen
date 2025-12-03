@@ -10,7 +10,7 @@ import librosa
 import librosa.display
 
 
-st.set_page_config(page_title="ODE Music Analyzer", layout="wide")
+st.set_page_config(page_title="ODE Music Analyzer", layout="wide", page_icon="🎻")
 st.title("Audio Harmonic Analyzer and Resynthesizer")
 st.write("Upload an audio file, view its spectrum A(f), resynthesize for A/B comparison, and play music in playground.")
 
