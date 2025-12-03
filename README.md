@@ -1,13 +1,11 @@
-# ODE Music Generator
+# ODE Music Analyzer & Violin Note Playground
 
-An audio harmonic analyzer and resynthesizer web application built with Streamlit.
+A Streamlit app for synthesizing violin notes using ODEs.
 
 ## Features
-
-- Upload audio files (wav, mp3, flac, ogg, m4a)
-- View audio spectrum A(f)
-- Detect peaks in the frequency domain
-- Resynthesize audio from detected peaks for A/B comparison
+- Single audio analysis: FFT spectrum, peak picking, sinusoidal resynthesis.
+- Two‑recording comparison: automatic fundamental detection, harmonic window search, amplitude MSE table and plots.
+- Playground: clickable piano (G2–C6) and keyboard control; starts playback at each note’s loudest point; highlights pressed keys; demo motif playback.
 
 ## Setup
 
@@ -49,15 +47,5 @@ streamlit run web_app.py
 - Librosa - Audio analysis
 - SoundFile - Audio file I/O
 
-## Usage
-
-1. Upload an audio file using the file uploader
-2. Adjust the parameters:
-   - Sample rate
-   - Maximum peaks to detect
-   - Minimum prominence threshold
-   - Frequency range (min/max)
-   - Resynthesis duration
-   - Scaling multiplier
-3. View the original spectrum and detected peaks
-4. Listen to both original and resynthesized audio for comparison
+## License
+This repository is for academic use; no explicit license provided.
