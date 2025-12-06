@@ -1,6 +1,6 @@
 # ODE Music Analyzer & Violin Note Playground
 
-A Streamlit app for synthesizing violin notes using ODEs.
+A Streamlit app for synthesizing violin notes using ODEs and evaluating them to actual recordings using FFT.
 
 ## Features
 - Single audio analysis: FFT spectrum, peak picking, sinusoidal resynthesis.
