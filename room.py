@@ -5,7 +5,7 @@ from scipy.io.wavfile import read, write
 
 #Load violin recording
 print("Loading audio file...")
-fs, violin = read("gen_sounds/high_quality/G3.wav")
+fs, violin = read("gen_sounds/full_ODE/A4.wav")
 violin = violin.astype(float)
 if violin.ndim > 1:
     violin = violin.mean(axis=1)

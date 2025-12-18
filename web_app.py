@@ -14,8 +14,8 @@ st.set_page_config(page_title="ODE Music Analyzer", layout="wide")
 st.title("Audio Harmonic Analyzer and Resynthesizer")
 st.write("Upload an audio file, view its spectrum A(f), resynthesize for A/B comparison, and play music in playground.")
 
-#1 is single-file analysis, 2 is two-file comparison, 3 is playground
-tab1, tab2, tab3 = st.tabs(["Single Audio Analysis", "Two Recording Comparison", "Playground"])
+# tabs: analysis, comparison, gallery, playground
+tab1, tab2, tab3, tab4 = st.tabs(["Single Audio Analysis", "Two Recording Comparison", "Gallery", "Playground"])
 
 ## --------------  HELPER FUNCTIONS  -------------- ##
 def load_audio(file_bytes: bytes, target_sr: int = 44100):
@@ -370,11 +370,11 @@ with tab2:
     with col_param1:
         comp_sr = st.number_input("Sample rate for comparison", min_value=8000, max_value=96000, value=44100, step=1000, key="comp_sr")
         min_fund_freq = st.number_input("Min fundamental freq (Hz)", min_value=20.0, value=50.0, step=1.0, key="min_fund")
-        max_display_freq = st.number_input("Max display frequency (Hz)", min_value=500.0, value=2000.0, step=100.0, key="max_display_freq")
+        max_display_freq = st.number_input("Max display frequency (Hz)", min_value=500.0, value=6000.0, step=100.0, key="max_display_freq")
         
     with col_param2:
         max_fund_freq = st.number_input("Max fundamental freq (Hz)", min_value=100.0, value=800.0, step=1.0, key="max_fund")
-        max_harmonics = st.slider("Max harmonics (n)", 1, 20, 10, key="max_harmonics")
+        max_harmonics = st.slider("Max harmonics (n)", 1, 30, 30, key="max_harmonics")
         window_size = st.number_input("Search window size (Hz)", min_value=0.1, value=5.0, step=0.1, key="window_size")
     
     if actual_file is not None and theoretical_file is not None:
@@ -420,6 +420,14 @@ with tab2:
         
         # plot normalized spectra including search windows and selected harmonic bins
         fig, (ax1, ax2) = plt.subplots(2, 1, figsize=(10, 6))
+        plt.rcParams.update({
+            'font.size': 13,
+            'axes.titlesize': 15,
+            'axes.labelsize': 13,
+            'legend.fontsize': 11,
+            'xtick.labelsize': 11,
+            'ytick.labelsize': 11,
+        })
         
         ax1.plot(freq_actual, mag_actual_norm, lw=0.8, label='Actual', color='blue')
         # annotate detected fundamental frequency
@@ -458,6 +466,11 @@ with tab2:
         ax2.legend()
         
         plt.tight_layout()
+        # prepare high-DPI in-memory image buffers BEFORE rendering/clearing
+        import io as _io
+        buf_spec = _io.BytesIO()
+        fig.savefig(buf_spec, format='png', dpi=300, bbox_inches='tight')
+        buf_spec.seek(0)
         st.pyplot(fig, clear_figure=True)
         
         # calculate mse metrics
@@ -518,6 +531,10 @@ with tab2:
                            ha='center', va='bottom', fontsize=8)
         
         plt.tight_layout()
+        # harmonics image buffer BEFORE rendering
+        buf_harm = _io.BytesIO()
+        fig_harmonics.savefig(buf_harm, format='png', dpi=300, bbox_inches='tight')
+        buf_harm.seek(0)
         st.pyplot(fig_harmonics, clear_figure=True)
         
         # plot per-harmonic mse values
@@ -529,12 +546,140 @@ with tab2:
         ax_mse.grid(True, alpha=0.3)
         
         plt.tight_layout()
+        # mse image buffer BEFORE rendering
+        buf_mse = _io.BytesIO()
+        fig_mse.savefig(buf_mse, format='png', dpi=300, bbox_inches='tight')
+        buf_mse.seek(0)
         st.pyplot(fig_mse, clear_figure=True)
+
+        # single zip download containing the three figures
+        import zipfile as _zipfile
+        # recompress images for smaller size while keeping readability
+        try:
+            from PIL import Image
+            def _to_jpeg(buf: bytes, quality: int = 85) -> bytes:
+                img = Image.open(_io.BytesIO(buf))
+                # convert to RGB for JPEG
+                if img.mode in ("RGBA", "P"):
+                    img = img.convert("RGB")
+                out = _io.BytesIO()
+                # progressive JPEG improves compression and readability when scaled
+                img.save(out, format='JPEG', quality=quality, optimize=True, progressive=True)
+                out.seek(0)
+                return out.getvalue()
+
+            spec_bytes = _to_jpeg(buf_spec.getvalue(), quality=100)
+            harm_bytes = _to_jpeg(buf_harm.getvalue(), quality=100)
+            mse_bytes  = _to_jpeg(buf_mse.getvalue(),  quality=100)
+            ext_spec, ext_harm, ext_mse = 'jpg', 'jpg', 'jpg'
+        except Exception:
+            # fallback to original buffers if Pillow not available
+            spec_bytes = buf_spec.getvalue()
+            harm_bytes = buf_harm.getvalue()
+            mse_bytes  = buf_mse.getvalue()
+            ext_spec, ext_harm, ext_mse = 'png', 'png', 'png'
+
+        zip_buf = _io.BytesIO()
+        with _zipfile.ZipFile(zip_buf, mode='w', compression=_zipfile.ZIP_DEFLATED) as zf:
+            zf.writestr(f'comparison_spectrum.{ext_spec}', spec_bytes)
+            zf.writestr(f'harmonics_comparison.{ext_harm}', harm_bytes)
+            zf.writestr(f'mse_per_harmonic.{ext_mse}', mse_bytes)
+        zip_buf.seek(0)
+        st.download_button(
+            label="Download all figures (ZIP)",
+            data=zip_buf.getvalue(),
+            file_name="comparison_figures.zip",
+            mime="application/zip",
+        )
         
     else:
         st.info("Please upload both actual and theoretical recordings to perform comparison.")  # require both recordings to proceed with comparison
 
 with tab3:
+    st.subheader("Gallery")
+    st.write("Compare selected notes and browse all ODE-generated notes.")
+
+    def _safe_load_audio_file(path: str):
+        try:
+            if not os.path.exists(path):
+                return None, None
+            y, sr = sf.read(path, always_2d=False)
+            if isinstance(y, np.ndarray) and y.ndim == 2:
+                y = np.mean(y, axis=1)
+            return y.astype(np.float32), int(sr)
+        except Exception:
+            return None, None
+
+    # section 1: side-by-side comparison for D4, E5, G3
+    st.markdown("**Selected Note Comparisons**")
+    compare_notes = ["D4", "E5", "G3"]
+    base_dir = os.path.dirname(__file__)
+    candidates = {
+        "full ODE": [os.path.join(base_dir, "gen_sounds", "full_ODE", "{note}.wav")],
+        "first harmonic": [
+            os.path.join(base_dir, "gen_sounds", "first_harmonic", "{note}.wav"),
+            os.path.join(base_dir, "gen_sounds", "partials", "first_harmonic", "{note}.wav"),
+        ],
+        "room resonance": [
+            os.path.join(base_dir, "gen_sounds", "room_resonance", "{note}.wav"),
+            os.path.join(base_dir, "gen_sounds", "effects", "room_resonance", "{note}.wav"),
+        ],
+        "real": [
+            os.path.join(base_dir, "real_sounds", "{note}.wav"),
+            os.path.join(base_dir, "dataset", "real", "{note}.wav"),
+        ],
+    }
+
+    for note in compare_notes:
+        st.write(f"Note {note}")
+        c1, c2, c3, c4 = st.columns(4)
+        for (label, paths), col in zip(candidates.items(), [c1, c2, c3, c4]):
+            with col:
+                found = None
+                for p in paths:
+                    path = p.format(note=note)
+                    if os.path.exists(path):
+                        found = path
+                        break
+                st.caption(label)
+                if found:
+                    y, sr = _safe_load_audio_file(found)
+                    if y is not None:
+                        st.audio(y, sample_rate=sr, format="audio/wav")
+                    else:
+                        st.info("Could not load audio.")
+                else:
+                    st.warning("Not available")
+
+    st.markdown("---")
+
+    # section 2: list all high-quality ODE notes
+    st.markdown("**All ODE-Generated Notes**")
+    hq_dir = os.path.join(os.path.dirname(__file__), "gen_sounds", "full_ODE")
+    if os.path.isdir(hq_dir):
+        wavs = sorted([f for f in os.listdir(hq_dir) if f.lower().endswith('.wav')])
+        if wavs:
+            for i in range(0, len(wavs), 4):
+                cols = st.columns(4)
+                for j, col in enumerate(cols):
+                    idx = i + j
+                    if idx >= len(wavs):
+                        continue
+                    fname = wavs[idx]
+                    note_name = os.path.splitext(fname)[0]
+                    with col:
+                        st.caption(note_name)
+                        y, sr = _safe_load_audio_file(os.path.join(hq_dir, fname))
+                        if y is not None:
+                            st.audio(y, sample_rate=sr, format="audio/wav")
+                        else:
+                            st.info("Could not load audio.")
+        else:
+            st.info("No WAV files found in gen_sounds/full_ODE.")
+    else:
+        st.info("Directory gen_sounds/full_ODE not found.")
+
+with tab4:
         st.write("Interactive piano playground using generated notes (G2–C6). Click keys or use keyboard to play/stop.")
 
         # define note names from G2 to C6 (inclusive) using equal-temperament sequence of semitones
@@ -586,7 +731,7 @@ with tab3:
         import base64
 
         def load_note_audio(note_name: str):
-                folder = os.path.join(os.path.dirname(__file__), "gen_sounds", "high_quality")
+                folder = os.path.join(os.path.dirname(__file__), "gen_sounds", "full_ODE")
                 path = os.path.join(folder, f"{note_name}.wav")
                 if not os.path.exists(path):
                         return None, None

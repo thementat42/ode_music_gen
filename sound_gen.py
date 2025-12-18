@@ -9,17 +9,17 @@ duration = 8.0          #sustained G note
 steps = int(duration*fs)
 
 # ----------------target note ---------------
-f1 = 587.33      #fundamental freq of D string
+f1 = 293.66      #fundamental freq of D string
 
 # physical parameters for G string
-M = 18                  
-L = 0.328               
-rho_l = 6e-4            
+M = 30
+L = 0.328
+rho_l = 6e-4
 
 # compute tension needed so f1 = (1/(2L)) * sqrt(T/(rho_l*L))
 T = (2*L*f1)**2 * (rho_l * L)
 
-xb = 0.1*L 
+xb = 0.1*L
 
 mu_s = 0.8
 mu_k = 0.3
