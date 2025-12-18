@@ -9,7 +9,7 @@ duration = 8.0          #sustained G note
 steps = int(duration*fs)
 
 # ----------------target note ---------------
-f1 = 293.66      #fundamental freq of D string
+f1 = 440     #fundamental freq of D string
 
 # physical parameters for G string
 M = 30
@@ -103,17 +103,54 @@ def rk4_step(y):
     k4 = deriv(y + dt*k3)
     return y + (dt/6.0)*(k1 + 2*k2 + 2*k3 + k4)
 
+# optionally, use Euler's method
+def euler_step(y):
+    # stabilized explicit Euler with substeps and slope limiting
+    h = dt
+    sub_steps = 8
+    y_new = y.copy()
+    h_sub = h / sub_steps
+    for _ in range(sub_steps):
+        k = deriv(y_new)
+        # limit extreme slopes and sanitize NaNs/Infs to avoid overflow
+        k = np.nan_to_num(k, nan=0.0, posinf=1e6, neginf=-1e6)
+        k = np.clip(k, -1e6, 1e6)
+        y_new = y_new + h_sub * k
+        # clamp bristle state 'phi' to a reasonable range for stability
+        y_new[2*M + 4] = float(np.clip(y_new[2*M + 4], -10.0, 10.0))
+    return y_new
+
+# optionally, use improved Euler's method
+def improved_euler_step(y):
+    # Heun's method (improved Euler) with substeps and slope limiting
+    h = dt
+    sub_steps = 4
+    y_new = y.copy()
+    h_sub = h / sub_steps
+    for _ in range(sub_steps):
+        k1 = deriv(y_new)
+        k1 = np.nan_to_num(k1, nan=0.0, posinf=1e6, neginf=-1e6)
+        k1 = np.clip(k1, -1e6, 1e6)
+        y_pred = y_new + h_sub * k1
+        k2 = deriv(y_pred)
+        k2 = np.nan_to_num(k2, nan=0.0, posinf=1e6, neginf=-1e6)
+        k2 = np.clip(k2, -1e6, 1e6)
+        y_new = y_new + (h_sub / 2.0) * (k1 + k2)
+        # clamp bristle state 'phi'
+        y_new[2*M + 4] = float(np.clip(y_new[2*M + 4], -10.0, 10.0))
+    return y_new
+
 # run simulation
 y = np.zeros(2*M + 5)
 output = np.zeros(steps)
 
 for i in range(steps):
-    y = rk4_step(y)
+    y = improved_euler_step(y)
     zbd = y[2*M+1]
     xHd = y[2*M+3]
     output[i] = 0.7*zbd + 0.3*xHd  # more bridge for warmth
 
 # save
 output /= np.max(np.abs(output)) + 1e-12
-wav_path = "D4.wav"
+wav_path = "A4.wav"
 write(wav_path, fs, (output*32767).astype(np.int16))

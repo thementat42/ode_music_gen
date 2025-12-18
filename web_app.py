@@ -612,29 +612,54 @@ with tab3:
 
     # section 1: side-by-side comparison for D4, E5, G3
     st.markdown("**Selected Note Comparisons**")
-    compare_notes = ["D4", "E5", "G3"]
+    compare_notes = ["G3", "D4", "A4", "E5"]
     base_dir = os.path.dirname(__file__)
-    candidates = {
-        "full ODE": [os.path.join(base_dir, "gen_sounds", "full_ODE", "{note}.wav")],
-        "first harmonic": [
+    candidates = [
+        ("analytic", [
+            os.path.join(base_dir, "gen_sounds", "analytic", "{note}.wav"),
+            os.path.join(base_dir, "gen_sounds", "partials", "analytic", "{note}.wav"),
+        ]),
+        ("first harmonic", [
             os.path.join(base_dir, "gen_sounds", "first_harmonic", "{note}.wav"),
             os.path.join(base_dir, "gen_sounds", "partials", "first_harmonic", "{note}.wav"),
-        ],
-        "room resonance": [
+        ]),
+        ("room resonance", [
             os.path.join(base_dir, "gen_sounds", "room_resonance", "{note}.wav"),
             os.path.join(base_dir, "gen_sounds", "effects", "room_resonance", "{note}.wav"),
-        ],
-        "real": [
+        ]),
+        ("full ODE Euler", [
+            os.path.join(base_dir, "gen_sounds", "full_ODE", "euler's", "{note}.wav"),
+            os.path.join(base_dir, "gen_sounds", "partials", "full_ODE_euler", "{note}.wav"),
+        ]),
+        ("full ODE Improved Euler", [
+            os.path.join(base_dir, "gen_sounds", "full_ODE", "improved_euler's", "{note}.wav"),
+            os.path.join(base_dir, "gen_sounds", "partials", "full_ODE_improved_euler", "{note}.wav"),
+        ]),
+        ("full ODE RK4", [
+            os.path.join(base_dir, "gen_sounds", "full_ODE", "{note}.wav"),
+        ]),
+        ("real", [
             os.path.join(base_dir, "real_sounds", "{note}.wav"),
             os.path.join(base_dir, "dataset", "real", "{note}.wav"),
-        ],
-    }
+        ]),
+    ]
 
     for note in compare_notes:
         st.write(f"Note {note}")
-        c1, c2, c3, c4 = st.columns(4)
-        for (label, paths), col in zip(candidates.items(), [c1, c2, c3, c4]):
+        # columns with a thin divider between 'full ODE RK4' and 'real'
+        num_generated = len(candidates) - 1  # all except the last (real)
+        cols = st.columns([1] * num_generated + [0.06, 1])
+        for i, col in enumerate(cols):
             with col:
+                if i == num_generated:
+                    # vertical divider line
+                    st.markdown(
+                        "<div style='width:2px;height:80px;border-left:2px solid #ddd;margin:0 auto;'></div>",
+                        unsafe_allow_html=True,
+                    )
+                    continue
+                # map generated columns to candidates in order, and the final column to real
+                label, paths = candidates[i] if i < num_generated else candidates[-1]
                 found = None
                 for p in paths:
                     path = p.format(note=note)
@@ -680,88 +705,88 @@ with tab3:
         st.info("Directory gen_sounds/full_ODE not found.")
 
 with tab4:
-        st.write("Interactive piano playground using generated notes (G2–C6). Click keys or use keyboard to play/stop.")
+    st.write("Interactive playground for violin notes (G2–C6). Click keys or use keyboard to play/stop.")
 
-        # define note names from G2 to C6 (inclusive) using equal-temperament sequence of semitones
-        white_keys_order = [
-                # octave 2
-                "G2", "A2", "B2",
-                # octave 3
-                "C3", "D3", "E3", "F3", "G3", "A3", "B3",
-                # octave 4
-                "C4", "D4", "E4", "F4", "G4", "A4", "B4",
-                # octave 5
-                "C5", "D5", "E5", "F5", "G5", "A5", "B5",
-                # octave 6 (up to C6)
-                "C6",
-        ]
+    # define note names from G2 to C6 (inclusive) using equal-temperament sequence of semitones
+    white_keys_order = [
+        # octave 2
+        "G2", "A2", "B2",
+        # octave 3
+        "C3", "D3", "E3", "F3", "G3", "A3", "B3",
+        # octave 4
+        "C4", "D4", "E4", "F4", "G4", "A4", "B4",
+        # octave 5
+        "C5", "D5", "E5", "F5", "G5", "A5", "B5",
+        # octave 6 (up to C6)
+        "C6",
+    ]
 
-        # corresponding black keys positioned between white keys where applicable
-        black_keys_map = {
-                "G2": "G#2", "A2": "A#2",
-                "C3": "C#3", "D3": "D#3",
-                "F3": "F#3", "G3": "G#3", "A3": "A#3",
-                "C4": "C#4", "D4": "D#4",
-                "F4": "F#4", "G4": "G#4", "A4": "A#4",
-                "C5": "C#5", "D5": "D#5",
-                "F5": "F#5", "G5": "G#5", "A5": "A#5",
-        }
+    # corresponding black keys positioned between white keys where applicable
+    black_keys_map = {
+        "G2": "G#2", "A2": "A#2",
+        "C3": "C#3", "D3": "D#3",
+        "F3": "F#3", "G3": "G#3", "A3": "A#3",
+        "C4": "C#4", "D4": "D#4",
+        "F4": "F#4", "G4": "G#4", "A4": "A#4",
+        "C5": "C#5", "D5": "D#5",
+        "F5": "F#5", "G5": "G#5", "A5": "A#5",
+    }
 
-        # keyboard mapping (US layout) for white and black keys, spatially arranged left to right
-        keymap_white = [
-                "z", "x", "c",
-                "v", "b", "n", "m", ",", ".", "/",
-                "q", "w", "e", "r", "t", "y", "u",
-                "i", "o", "p", "[", "]", "\\",
-                "1",
-        ]
-        keymap_black = {
-                "z": "s", "x": "d",
-                "v": "g", "b": "h", "n": "j",
-                    "m": "k", ",": "l", ".": ";",
-                "q": "2", "w": "3",
-                "r": "5", "t": "6", "y": "7",
-                "i": "9", "o": "0",
-                # higher row approximations
-                "p": "-", "[": "=",
-                "1": None,
-        }
+    # keyboard mapping (US layout) for white and black keys, spatially arranged left to right
+    keymap_white = [
+        "z", "x", "c",
+        "v", "b", "n", "m", ",", ".", "/",
+        "q", "w", "e", "r", "t", "y", "u",
+        "i", "o", "p", "[", "]", "\\",
+        "1",
+    ]
+    keymap_black = {
+        "z": "s", "x": "d",
+        "v": "g", "b": "h", "n": "j",
+        "m": "k", ",": "l", ".": ";",
+        "q": "2", "w": "3",
+        "r": "5", "t": "6", "y": "7",
+        "i": "9", "o": "0",
+        # higher row approximations
+        "p": "-", "[": "=",
+        "1": None,
+    }
 
-        # attempt to load audio files for each note and compute peak start times
-        import base64
+    # attempt to load audio files for each note and compute peak start times
+    import base64
 
-        def load_note_audio(note_name: str):
-                folder = os.path.join(os.path.dirname(__file__), "gen_sounds", "full_ODE")
-                path = os.path.join(folder, f"{note_name}.wav")
-                if not os.path.exists(path):
-                        return None, None
-                y, sr = sf.read(path, always_2d=False)
-                if y.ndim == 2:
-                        y = np.mean(y, axis=1)
-                # compute index of maximum absolute amplitude to start playback at loudest point
-                idx_peak = int(np.argmax(np.abs(y)))
-                peak_time = float(idx_peak) / float(sr)
-                # encode to base64 for embedding
-                with open(path, "rb") as f:
-                        b64 = base64.b64encode(f.read()).decode("ascii")
-                src = f"data:audio/wav;base64,{b64}"
-                return src, peak_time
+    def load_note_audio(note_name: str):
+        folder = os.path.join(os.path.dirname(__file__), "gen_sounds", "full_ODE")
+        path = os.path.join(folder, f"{note_name}.wav")
+        if not os.path.exists(path):
+            return None, None
+        y, sr = sf.read(path, always_2d=False)
+        if y.ndim == 2:
+            y = np.mean(y, axis=1)
+        # compute index of maximum absolute amplitude to start playback at loudest point
+        idx_peak = int(np.argmax(np.abs(y)))
+        peak_time = float(idx_peak) / float(sr)
+        # encode to base64 for embedding
+        with open(path, "rb") as f:
+            b64 = base64.b64encode(f.read()).decode("ascii")
+        src = f"data:audio/wav;base64,{b64}"
+        return src, peak_time
 
-        notes_data = {}
-        for wn in white_keys_order:
-                src, t0 = load_note_audio(wn)
-                if src is not None:
-                        notes_data[wn] = {"src": src, "t0": t0}
-        for wk, bk in black_keys_map.items():
-                # include black keys only if their audio exists
-                if bk:
-                        src, t0 = load_note_audio(bk)
-                        if src is not None:
-                                notes_data[bk] = {"src": src, "t0": t0}
+    notes_data = {}
+    for wn in white_keys_order:
+        src, t0 = load_note_audio(wn)
+        if src is not None:
+            notes_data[wn] = {"src": src, "t0": t0}
+    for wk, bk in black_keys_map.items():
+        # include black keys only if their audio exists
+        if bk:
+            src, t0 = load_note_audio(bk)
+            if src is not None:
+                notes_data[bk] = {"src": src, "t0": t0}
 
-        # build a simple predefined (approximate) sequence for fur elise in e minor
-        # sequence of (note, start_time_seconds, duration_seconds)
-        fur_elise_sequence = [
+    # build a simple predefined (approximate) sequence for fur elise in e minor
+    # sequence of (note, start_time_seconds, duration_seconds)
+    fur_elise_sequence = [
             # --- Pickup ---
             ("E5", 0.00, 0.15), ("D#5", 0.15, 0.15),
 
@@ -813,25 +838,25 @@ with tab4:
             # Lands on A4; LH plays A-E-A
             ("A4", 6.45, 0.90), ("A2", 6.45, 0.30),
             ("E3", 6.75, 0.30), ("A3", 7.05, 0.30),
-        ]
+    ]
 
-        st.write("All notes are generated with ODE to mimic violin.")
+    st.write("All notes are synthesized violin notes from ODE.")
 
-        # render interactive keyboard via html/js component
-        import json
-        from streamlit.components.v1 import html
+    # render interactive keyboard via html/js component
+    import json
+    from streamlit.components.v1 import html
 
-        keyboard_notes = {
-                "white": white_keys_order,
-                "black": black_keys_map,
-                "keymap_white": keymap_white,
-                "keymap_black": keymap_black,
-                "audio": notes_data,
-                "sequence": fur_elise_sequence,
-        }
+    keyboard_notes = {
+        "white": white_keys_order,
+        "black": black_keys_map,
+        "keymap_white": keymap_white,
+        "keymap_black": keymap_black,
+        "audio": notes_data,
+        "sequence": fur_elise_sequence,
+    }
 
-        comp_height = 420
-        html_content = f"""
+    comp_height = 420
+    html_content = f"""
         <style>
             .piano {{
                 position: relative;
@@ -1075,4 +1100,4 @@ with tab4:
         </script>
         """
 
-        html(html_content, height=comp_height)
+    html(html_content, height=comp_height)
