@@ -2,6 +2,9 @@
 
 A Streamlit app for synthesizing violin notes using ODEs and evaluating them against actual recordings using FFT.
 
+## Video Demo
+[![Violin Synthesizer Demo](http://img.youtube.com/vi/WFbhoA79KgM/0.jpg)](https://youtu.be/WFbhoA79KgM)
+
 ## Features
 - Single audio analysis: FFT spectrum, peak picking, sinusoidal resynthesis.
 - Two‑recording comparison: automatic fundamental detection, harmonic window search, amplitude MSE table and plots.
